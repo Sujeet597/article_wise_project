@@ -52,6 +52,42 @@ class MSAStockAnalysis:
         
         print("✅ MSA Stock Analysis Pipeline Initialized")
     
+    # ================== HELPER: Multi-Encoding File Reader ==================
+    
+    def _read_csv_with_encoding(self, filepath: str, encodings: List[str] = None):
+        """
+        Try reading CSV with multiple encodings
+        
+        Tries encodings in order: utf-8, latin-1, cp1252, iso-8859-15, ascii (with errors='ignore')
+        """
+        if encodings is None:
+            encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'iso-8859-15', 'utf-16']
+        
+        last_error = None
+        
+        # Try each encoding
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(filepath, encoding=encoding)
+                return df
+            except Exception as e:
+                last_error = e
+                continue
+        
+        # If all encodings fail, try with errors='ignore' (most permissive)
+        try:
+            df = pd.read_csv(filepath, encoding='latin-1', on_bad_lines='skip')
+            return df
+        except Exception as e:
+            last_error = e
+        
+        # Last resort: try utf-8 with errors='ignore'
+        try:
+            df = pd.read_csv(filepath, encoding='utf-8', on_bad_lines='skip', engine='python')
+            return df
+        except Exception as e:
+            raise Exception(f"Could not read {filepath} with any encoding. Last error: {e}")
+    
     # ================== STEP 1: Load Input Data ==================
     
     def step1_load_input_data(self):
@@ -59,8 +95,8 @@ class MSAStockAnalysis:
         print("\n📥 STEP 1: Loading Input Data...")
         
         try:
-            # Load MSA data
-            self.msa_data = pd.read_csv(self.msa_csv_path)
+            # Load MSA data (with multi-encoding support)
+            self.msa_data = self._read_csv_with_encoding(self.msa_csv_path)
             print(f"   ✓ MSA data loaded: {self.msa_data.shape[0]} rows, {self.msa_data.shape[1]} columns")
             
             # Load Store Master
@@ -157,7 +193,7 @@ class MSAStockAnalysis:
                     filepath = os.path.join(self.base_data_folder, file)
                     try:
                         if file.endswith('.csv'):
-                            df = pd.read_csv(filepath)
+                            df = self._read_csv_with_encoding(filepath)
                         else:
                             df = pd.read_excel(filepath)
                         
@@ -190,7 +226,7 @@ class MSAStockAnalysis:
                     filepath = os.path.join(self.list_data_folder, file)
                     try:
                         if file.endswith('.csv'):
-                            df = pd.read_csv(filepath)
+                            df = self._read_csv_with_encoding(filepath)
                         else:
                             # Try header at row 6, then default
                             try:

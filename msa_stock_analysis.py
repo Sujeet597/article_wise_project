@@ -197,6 +197,26 @@ class MSAStockAnalysis:
         
         return True
     
+    def _remove_duplicate_columns(self, df, sample_size=100):
+        """Remove truly duplicate columns (same values)"""
+        cols_to_drop = []
+        seen_hashes = {}
+        
+        for col in df.columns:
+            # Create hash of column values (sample-based for efficiency)
+            try:
+                col_sample = df[col].astype(str).head(sample_size).tolist()
+                col_hash = tuple(col_sample)
+                
+                if col_hash in seen_hashes:
+                    cols_to_drop.append(col)
+                else:
+                    seen_hashes[col_hash] = col
+            except:
+                pass
+        
+        return cols_to_drop
+    
     def _get_category_from_filename(self, filename: str) -> Optional[str]:
         """Extract category from filename (GM, KIDS, LADIES, MENS)"""
         filename_upper = filename.upper()
@@ -348,10 +368,11 @@ class MSAStockAnalysis:
     # ================== STEP 5: Merge Data ==================
     
     def step5_merge_data(self):
-        """Merge BASE DATA, LIST DATA, and MRST data using VLOOKUP logic"""
-        print(f"\n🔗 STEP 5: Merging Data (BASE + LIST + MRST)...")
+        """Merge BASE DATA, LIST DATA, and MRST data using VLOOKUP logic - OPTIMIZED"""
+        print(f"\n🔗 STEP 5: Merging Data (Memory Optimized)...")
         
-        result_df = self.expanded_data.copy()
+        # Work directly on expanded_data (no deep copy initially)
+        result_df = self.expanded_data
         print(f"   Starting with: {len(result_df):,} rows, {len(result_df.columns)} columns")
         
         # Standardize key columns to string
@@ -623,7 +644,18 @@ class MSAStockAnalysis:
                     cols_to_rename[col] = new_name
         
         if cols_to_rename:
-            result_df = result_df.rename(columns=cols_to_rename)
+            result_df.rename(columns=cols_to_rename, inplace=True)
+        
+        # AGGRESSIVE: Remove duplicate key columns from merges
+        print(f"   Removing duplicate key columns...", end=" ")
+        merge_key_cols = ['MAJCAT', 'GEN_ART', 'Store_Code', 'MAJCAT_1', 'GEN_ART_1', 'ST_CD', 'COMB_1']
+        cols_to_drop = [c for c in merge_key_cols if c in result_df.columns]
+        
+        if cols_to_drop:
+            result_df.drop(columns=cols_to_drop, inplace=True)
+            print(f"Dropped {len(cols_to_drop)}")
+        else:
+            print(f"None found")
         
         self.expanded_data = result_df
         print(f"\n   ✓ Merged {merge_count} data sources")
@@ -634,10 +666,28 @@ class MSAStockAnalysis:
     # ================== STEP 6: Consolidate & Clean ==================
     
     def step6_consolidate_data(self):
-        """Consolidate category-specific columns and clean duplicates"""
-        print(f"\n🧹 STEP 6: Consolidating & Cleaning Data...")
+        """Consolidate category-specific columns and clean duplicates - MEMORY OPTIMIZED"""
+        print(f"\n🧹 STEP 6: Consolidating & Cleaning Data (Memory Optimized)...")
         
-        result_df = self.expanded_data.copy()
+        print(f"   Current shape: {self.expanded_data.shape[0]:,} rows × {self.expanded_data.shape[1]:,} columns")
+        
+        # CRITICAL: Remove duplicate/redundant columns FIRST
+        # This reduces memory footprint before any consolidation
+        print(f"   Removing redundant columns...")
+        
+        cols_to_drop = []
+        
+        # Drop columns that are entirely NaN
+        for col in self.expanded_data.columns:
+            if self.expanded_data[col].isna().all():
+                cols_to_drop.append(col)
+        
+        if cols_to_drop:
+            self.expanded_data.drop(columns=cols_to_drop, inplace=True)
+            print(f"   ✓ Removed {len(cols_to_drop)} all-NaN columns")
+        
+        # Work directly on expanded_data (no copy!)
+        result_df = self.expanded_data
         
         # Consolidate category-specific columns
         consolidate_cols = [
@@ -653,66 +703,72 @@ class MSAStockAnalysis:
             if len(matching_cols) > 1:
                 print(f"   Consolidating {consolidated_name}...", end=" ")
                 try:
-                    # Combine category columns using fillna
-                    consolidated = result_df[matching_cols[0]].copy()
+                    # Combine category columns using fillna - NO copy
+                    consolidated = result_df[matching_cols[0]].fillna(0)
                     for col in matching_cols[1:]:
                         consolidated = consolidated.fillna(result_df[col])
                     
                     result_df[consolidated_name] = consolidated
-                    result_df = result_df.drop(columns=matching_cols)
+                    result_df.drop(columns=matching_cols, inplace=True)
                     print(f"✓")
-                except:
-                    print(f"✗")
+                except Exception as e:
+                    print(f"✗ ({str(e)[:30]})")
             elif len(matching_cols) == 1:
-                result_df = result_df.rename(columns={matching_cols[0]: consolidated_name})
+                result_df.rename(columns={matching_cols[0]: consolidated_name}, inplace=True)
         
-        # Remove duplicate ST_CD columns
+        # Remove duplicate ST_CD columns (in-place)
         st_cd_cols = [c for c in result_df.columns if c == 'ST_CD']
         if len(st_cd_cols) > 1:
-            result_df = result_df.drop(columns=st_cd_cols[1:])
+            result_df.drop(columns=st_cd_cols[1:], inplace=True)
             print(f"   ✓ Kept 1 ST_CD, removed {len(st_cd_cols)-1} duplicates")
         
-        # Fill missing values
+        # Fill missing values (in-place, selective)
         print(f"   Filling missing values...")
         identifier_cols = ['MAJ_CAT', 'GEN_ART_NUMBER', 'ST_CD', 'STORE_ST_CD', 'STORE_ST_NM', 'CLR', 'DATE']
         existing_id_cols = [c for c in identifier_cols if c in result_df.columns]
         
-        # Fill numeric columns with 0, text with empty string
-        for col in result_df.columns:
+        # ONLY fill numeric columns (avoid string operations)
+        numeric_cols = result_df.select_dtypes(include=['float64', 'int64']).columns
+        for col in numeric_cols:
             if col not in existing_id_cols:
-                if result_df[col].dtype in ['float64', 'int64']:
-                    result_df[col] = result_df[col].fillna(0)
+                result_df[col].fillna(0, inplace=True)
         
-        for col in existing_id_cols:
-            if col in result_df.columns and result_df[col].dtype == 'object':
-                result_df[col] = result_df[col].fillna('')
+        print(f"   ✓ Filled {len(numeric_cols)} numeric columns")
         
-        # Remove duplicate CLR rows with all zero data
-        print(f"   Removing duplicate CLR rows with zero data...", end=" ")
+        # Remove duplicate CLR rows with all zero data (OPTIMIZED)
+        print(f"   Checking for zero-data CLR rows...", end=" ")
         if 'CLR' in result_df.columns:
-            numeric_cols = result_df.select_dtypes(include=['number']).columns.tolist()
-            data_cols = [c for c in numeric_cols if c not in existing_id_cols]
+            numeric_cols_list = result_df.select_dtypes(include=['number']).columns.tolist()
+            data_cols = [c for c in numeric_cols_list if c not in existing_id_cols]
             
-            if data_cols:
-                result_df['_row_sum'] = result_df[data_cols].sum(axis=1)
-                
-                rows_to_keep = []
-                for clr, group in result_df.groupby('CLR', dropna=False):
-                    has_data = group['_row_sum'] > 0
-                    if has_data.any():
-                        rows_to_keep.extend(group[has_data].index.tolist())
-                    else:
-                        rows_to_keep.append(group.index[0])
-                
-                result_df = result_df.loc[rows_to_keep].drop(columns=['_row_sum']).reset_index(drop=True)
-                print(f"✓")
+            if data_cols and len(data_cols) > 0:
+                # Use sum to find zero-sum rows
+                try:
+                    row_sums = result_df[data_cols].sum(axis=1)
+                    
+                    rows_to_keep = []
+                    for clr in result_df['CLR'].unique():
+                        clr_mask = result_df['CLR'] == clr
+                        clr_indices = result_df[clr_mask].index
+                        clr_sums = row_sums[clr_indices]
+                        
+                        has_data = clr_sums > 0
+                        if has_data.any():
+                            rows_to_keep.extend(clr_indices[has_data].tolist())
+                        else:
+                            rows_to_keep.append(clr_indices[0])
+                    
+                    result_df = result_df.loc[rows_to_keep].reset_index(drop=True)
+                    print(f"✓ ({len(rows_to_keep):,} rows kept)")
+                except Exception as e:
+                    print(f"⚠ (error: {str(e)[:20]})")
             else:
-                print(f"⚠")
+                print(f"⚠ (no data columns)")
         else:
             print(f"⚠ (CLR column not found)")
         
         self.final_data = result_df
-        print(f"   ✓ Final: {len(result_df):,} rows × {len(result_df.columns)} columns")
+        print(f"   ✓ Final shape: {self.final_data.shape[0]:,} rows × {self.final_data.shape[1]:,} columns")
         
         return True
     

@@ -18,6 +18,7 @@ from datetime import datetime
 import uvicorn
 
 from msa_stock_analysis import MSAStockAnalysis
+from folder_detector import FolderStructureDetector
 
 # ==================== FASTAPI APP SETUP ====================
 
@@ -76,6 +77,19 @@ class PipelineResponse(BaseModel):
     message: str
     progress: int = 0
     error: Optional[str] = None
+
+class FolderDetectRequest(BaseModel):
+    root_folder_path: str
+
+class FolderDetectResponse(BaseModel):
+    success: bool
+    msa_csv: Optional[str] = None
+    store_master: Optional[str] = None
+    base_data_folder: Optional[str] = None
+    list_data_folder: Optional[str] = None
+    mrst: Optional[str] = None
+    errors: List[str] = []
+    summary: Dict = {}
 
 # ==================== GLOBAL STATE ====================
 
@@ -217,6 +231,43 @@ async def health_check():
         "service": "MSA Stock Analysis API",
         "version": "1.0.0"
     }
+
+@app.post("/api/detect-folder")
+async def detect_folder(request: FolderDetectRequest):
+    """Auto-detect MSA pipeline files in a folder structure"""
+    try:
+        root_path = request.root_folder_path
+        
+        if not os.path.exists(root_path):
+            raise HTTPException(status_code=400, detail=f"Path does not exist: {root_path}")
+        
+        if not os.path.isdir(root_path):
+            raise HTTPException(status_code=400, detail=f"Path is not a directory: {root_path}")
+        
+        # Detect folder structure
+        detector = FolderStructureDetector(root_path)
+        files = detector.detect_all()
+        is_valid, errors = detector.validate()
+        summary = detector.get_summary()
+        
+        # Build response
+        response = FolderDetectResponse(
+            success=is_valid,
+            msa_csv=files.get('msa_csv'),
+            store_master=files.get('store_master'),
+            base_data_folder=files.get('base_data_folder'),
+            list_data_folder=files.get('list_data_folder'),
+            mrst=files.get('mrst'),
+            errors=errors,
+            summary={k: str(v) for k, v in summary.items() if k not in ['root_path', 'detected_files', 'errors', 'is_valid']}
+        )
+        
+        return response
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/browse")
 async def browse_folder(request: FolderBrowseRequest):

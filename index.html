@@ -651,6 +651,22 @@
                 <h2>⚙️ Configure MSA Pipeline</h2>
                 
                 <div class="form-group">
+                    <label>🎯 Quick Setup - Auto-Detect Folder:</label>
+                    <div class="button-group">
+                        <input type="text" id="rootFolderPath" placeholder="Paste root folder path (e.g., /path/to/DW01)..." style="flex: 1;">
+                        <button class="btn-primary" onclick="autoDetectFolder()">🔍 Auto-Detect</button>
+                    </div>
+                    <p style="font-size: 12px; color: #666; margin-top: 8px;">
+                        💡 Paste the root folder path containing BASE DATA, LIST DATA, MRST, and data files. 
+                        The app will automatically find and configure everything!
+                    </p>
+                </div>
+
+                <div style="border-top: 2px solid #ddd; margin: 20px 0; padding-top: 20px;">
+                    <label style="font-weight: bold; color: #666;">Or Configure Manually:</label>
+                </div>
+                
+                <div class="form-group">
                     <label>MSA CSV File:</label>
                     <div class="button-group">
                         <input type="text" id="msaCsvPath" placeholder="Select MSA CSV file..." style="flex: 1;">
@@ -943,6 +959,72 @@
         }
 
         // ==================== PIPELINE ====================
+
+        async function autoDetectFolder() {
+            const rootPath = document.getElementById('rootFolderPath').value;
+            
+            if (!rootPath) {
+                showAlert('Please enter a folder path', 'warning', 'pipelineAlertContainer');
+                return;
+            }
+            
+            try {
+                showAlert('🔍 Detecting folder structure...', 'info', 'pipelineAlertContainer');
+                
+                const response = await fetch(`${API_URL}/detect-folder`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ root_folder_path: rootPath })
+                });
+                
+                if (!response.ok) {
+                    throw new Error('Failed to detect folder structure');
+                }
+                
+                const data = await response.json();
+                
+                if (!data.success) {
+                    const errorMsg = data.errors.join('; ');
+                    showAlert(`Detection failed: ${errorMsg}`, 'error', 'pipelineAlertContainer');
+                    return;
+                }
+                
+                // Auto-fill all fields
+                if (data.msa_csv) document.getElementById('msaCsvPath').value = data.msa_csv;
+                if (data.store_master) document.getElementById('storeMasterPath').value = data.store_master;
+                if (data.base_data_folder) document.getElementById('baseDataFolder').value = data.base_data_folder;
+                if (data.list_data_folder) document.getElementById('listDataFolder').value = data.list_data_folder;
+                if (data.mrst) document.getElementById('mrstPath').value = data.mrst;
+                
+                // Show summary
+                let summary = '✅ Auto-detection successful!\n\n';
+                summary += 'Detected files:\n';
+                summary += `• MSA CSV: ${data.msa_csv ? '✓' : '✗'}\n`;
+                summary += `• Store Master: ${data.store_master ? '✓' : '✗'}\n`;
+                summary += `• BASE DATA Folder: ${data.base_data_folder ? '✓' : '✗'}\n`;
+                summary += `• LIST DATA Folder: ${data.list_data_folder ? '✓' : '✗'}\n`;
+                summary += `• MRST File: ${data.mrst ? '✓' : '✗'}\n\n`;
+                
+                // Add summary details if available
+                if (data.summary) {
+                    summary += 'Details:\n';
+                    for (const [key, value] of Object.entries(data.summary)) {
+                        if (key.includes('files') || key.includes('size')) {
+                            summary += `• ${key}: ${value}\n`;
+                        }
+                    }
+                }
+                
+                showAlert(summary.replace(/\n/g, ' | '), 'success', 'pipelineAlertContainer');
+                
+                console.log('✅ Folder auto-detection complete!');
+                console.log('Summary:', data.summary);
+                
+            } catch (error) {
+                showAlert(`Error: ${error.message}`, 'error', 'pipelineAlertContainer');
+                console.error('Auto-detect error:', error);
+            }
+        }
 
         async function runPipeline() {
             const config = {
